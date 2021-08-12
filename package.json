@@ -1,0 +1,23 @@
+{
+  "name": "jms-engine",
+  "version": "0.1.0",
+  "description": "JSON Message Switch Engine",
+  "main": "index.js",
+  "scripts": {
+    "lint": "eslint ./",
+    "test": ""
+  },
+  "keywords": [
+    "message",
+    "switch",
+    "engine",
+    "child process"
+  ],
+  "author": "0LEG0",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/0LEG0/jms-engine.git"
+  },
+  "private": true
+}
