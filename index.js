@@ -10,14 +10,34 @@ let MESSAGE_DELAY = 20;
 let JENGINE = null;
 
 /* logger */
-if (!global.LOG) global.LOG = {
-	access: (...args) => console.log(...args),
-	error: (...args) => console.error(...args),
-	warn: (...args) => console.log(...args),
-	info: (...args) => console.log(...args),
-	debug: (...args) => console.log(...args)
+class Logger {
+	constructor(level = 3) {
+		this.level = level;
+	}
+	setLevel(l) {
+		if (typeof l == "string" && typeof Logger[l] == "number" && Logger[l] >= 0 && Logger[l] <= 3) this.level = Logger[l];
+		if (typeof l == "number" && l >= 0 && l <= 3) this.level = l;
+	}
+	getLevel() { return this.level }
+	log(level, ...args) {
+		if (typeof level == "string") level = Logger[level];
+		if (level <= this.level) this._write(level, ...args);
+	}
+	error(...args) { this.log(Logger.ERROR, ...args) }
+	warn(...args) { this.log(Logger.WARN, ...args) }
+	info(...args) { this.log(Logger.INFO, ...args) }
+	debug(...args) { this.log(Logger.DEBUG, ...args) }
+	_write(level, ...args) {
+		//                                                        blue                      green                     purple       red
+		console.log(`${new Date().toISOString()} [${level > 2 ? "\x1b[36m" : (level > 1 ? "\x1b[32m" : (level > 0 ? "\x1b[35m" : "\x1b[31m"))}${Logger[level]}\x1b[0m]`, ...args);
+	}
 }
+Logger.ERROR = 0; Logger[0] = "ERROR";
+Logger.WARN = 1; Logger[1] = "WARN";
+Logger.INFO = 2; Logger[2] = "INFO";
+Logger.DEBUG = 3; Logger[3] = "DEBUG";
 
+/* Message */
 class JMessage {
 	constructor(name, payload, enqueue, broadcast, timeout) {
 		if (typeof name !== "string") throw new Error("Wrong message name.");
@@ -28,7 +48,7 @@ class JMessage {
 		this.handlers = [];
 		this.result = null;
 		this.error = undefined;
-		this.timeout = typeof timeout == "number" ? timeout : MESSAGE_TIMEOUT;
+		this.timeout = typeof timeout == "number" ? timeout : undefined;
 		this.broadcast = broadcast ? true : false;
 		this.enqueue = enqueue ? true : false;
 		this.payload = {};
@@ -122,15 +142,17 @@ JMessage.create = function(obj) {
 	throw new Error("Wrong message name.");
 }
 
-class JEngine {
+/* Engine */
+class JEngine extends Logger {
 
 	constructor(name) {
+		super();
 		this._modules = [];
 		this._installs = new Map(); // message_name, [handlers] ordered by priority
 		this._watchers = new Map();
 		this.name = name;
 	}
-	
+
 	getModules() {
 		return this._modules;
 	}
@@ -143,16 +165,22 @@ class JEngine {
 	getMessages() {
 		return [...this._installs.keys()];
 	}
+	// Set global message timeout
+	setTimeout(timeout) {
+		if (typeof timeout == "number") return MESSAGE_TIMEOUT = timeout;
+		return MESSAGE_TIMEOUT;
+	}
 
 	load(...args) {
 		return new Promise((resolve, reject) => {
-
+			let jengine = this;
 			const jmodule = fork(...args); //, {stdio: ['ipc', 'ignore', 'ignore']});
 			jmodule.name = path.basename(jmodule.spawnargs[1], ".js");
 			jmodule.ready = false;
 			jmodule.respawn = true;
 			jmodule.selfwatch = false;
 			jmodule.selfdispatch = false;
+			jmodule.selftimeout = MESSAGE_TIMEOUT;
 			jmodule.installs = {};
 			jmodule.setMaxListeners(200);
 
@@ -161,38 +189,37 @@ class JEngine {
 					if (jmodule.connected && jmodule.channel)
 						jmodule.send(...args);
 				} catch (err) {
-					LOG.info(`Module ${jmodule.name} IPC error`, err.stack);
+					jengine.error(`Module ${jmodule.name} IPC error`, err.stack);
 				}
 			};
 
 			jmodule.on("close", (ev) => {
-				LOG.info(`Module ${jmodule.name} closed with code: ${ev}`);
+				jengine.info(`Module ${jmodule.name} closed with code: ${ev}`);
 			});
 
 			jmodule.on("error", (err) => {
-				LOG.error(`Module ${jmodule.name} internal error occur`, err.stack);
+				jengine.error(`Module ${jmodule.name} internal error occur`, err.stack);
 			});
 
 			jmodule.on("disconnect", () => {
-				LOG.info(`Module ${jmodule.name} has been disconnected.`);
+				jengine.warn(`Module ${jmodule.name} has been disconnected.`);
 				// Reject if not initialized
 				if (!jmodule.ready) {
-					reject(`Module ${jmodule.name} has been disconnected.`);
+					reject(`Module ${jmodule.name} loading failed.`);
 				}
 			});
 			jmodule.on("spawn", () => {
-				//console.log(`Module ${jsmodule.name} loading...`);
-				LOG.info(`Module ${jmodule.name} loading...`);
+				jengine.info(`Module ${jmodule.name} loading...`);
 			});
 
 			// respawn
 			jmodule.once("exit", (ev) => {
-				LOG.info(`Module ${jmodule.name} exited with code ${ev}`);
-				this.unsubscribe(jmodule, ev);
+				jengine.info(`Module ${jmodule.name} exited with code ${ev}`);
+				jengine.unsubscribe(jmodule, ev);
 				if (ev !== 0 && jmodule.respawn && jmodule.ready)
 					setTimeout(() => {
-						LOG.info("Try respawn", jmodule.name);
-						this.load(...args);
+						jengine.info("Try respawn", jmodule.name);
+						jengine.load(...args);
 					}, 7000);
 			});
 
@@ -200,104 +227,79 @@ class JEngine {
 			jmodule.on("message", (message) => {
 				// Resolve load() with any incoming message!
 				if (!jmodule.ready) {
-					LOG.info(`Module ${jmodule.name} is ready.`);
+					jengine.info(`Module ${jmodule.name} is ready.`);
 					jmodule.ready = true;
 					resolve(jmodule);
 				}
-
+				// Skip if not message
 				if (!JMessage.isMessage(message)) {
-					LOG.debug(jmodule.name + " -\x1b[31m?\x1b[0m->", JSON.stringify(message));
+					jengine.debug(`${jmodule.name} -\x1b[31m?\x1b[0m-> ${JSON.stringify(message)}`);
 					return;
 				}
 				message = JMessage.create(message);
+				// Define message.timeout
+				if (typeof message.timeout !== "number") message.timeout = jmodule.selftimeout || MESSAGE_TIMEOUT;
+
 				switch (message.type) {
 					case "request":
 						if (message.enqueue) {
-							LOG.debug(
-								jmodule.name +	" -\x1b[31mE\x1b[0m->",
-								JSON.stringify(message)
-							);
+							jengine.debug(`${jmodule.name} -\x1b[31mE\x1b[0m-> ${JSON.stringify(message)}`);
 						} else {
-							LOG.debug(
-								jmodule.name + " -\x1b[31mR\x1b[0m->",
-								JSON.stringify(message)
-							);
+							jengine.debug(`${jmodule.name} -\x1b[31mR\x1b[0m-> ${JSON.stringify(message)}`);
 						}
-						this._dispatch(message, jmodule)
-							.catch((err) => err)
+						jengine._dispatch(message, jmodule)
+							.catch((err) => {
+								message.error = err.stack;
+								message.type = "error";
+								return message;
+							})
 							.then((answer) => {
 								//result = SMessage.create(result);
-								answer.type =
-									answer.type !== "error"
-										? "answer"
-										: "error";
+								answer.type = (answer.type !== "error") ? "answer" : "error";
 								answer.handled = answer.handled ? true : false;
 								if (!message.enqueue) {
-									LOG.debug(
-										jmodule.name + " <-\x1b[31mA\x1b[0m-",
-										JSON.stringify(answer)
-									);
-									if (jmodule.connected)
-										jmodule.sendMessage(answer);
+									jengine.debug(`${jmodule.name} <-\x1b[31mA\x1b[0m- ${JSON.stringify(answer)}`);
+									if (jmodule.connected) jmodule.sendMessage(answer);
 								}
 								return answer;
 							})
-							.then((notice) => this._notify(notice, jmodule));
+							.then((notice) => jengine._notify(notice, jmodule));
 						break;
 					case "install":
-						LOG.debug(
-							jmodule.name + " -I->",
-							JSON.stringify(message)
-						);
+						jengine.debug(`${jmodule.name} -I-> ${JSON.stringify(message)}`);
 						jmodule.installs[message.name] = message.payload.priority;
-						this._install(message.name, jmodule);
+						jengine._install(message.name, jmodule);
 						break;
 					case "uninstall":
-						LOG.debug(
-							jmodule.name + " -U->",
-							JSON.stringify(message)
-						);
-						this._uninstall(message.name, jmodule);
+						jengine.debug(`${jmodule.name} -U-> ${JSON.stringify(message)}`);
+						jengine._uninstall(message.name, jmodule);
 						break;
 					case "watch":
-						LOG.debug(
-							jmodule.name + " -W->",
-							JSON.stringify(message)
-						);
-						this._watch(message.name, jmodule);
+						jengine.debug(`${jmodule.name} -W-> ${JSON.stringify(message)}`);
+						jengine._watch(message.name, jmodule);
 						break;
 					case "unwatch":
-						LOG.debug(
-							jmodule.name + " -U->",
-							JSON.stringify(message)
-						);
-						this._unwatch(message.name, jmodule);
+						jengine.debug(`${jmodule.name} -U-> ${JSON.stringify(message)}`);
+						jengine._unwatch(message.name, jmodule);
 						break;
 					case "setlocal":
-						LOG.debug(
-							jmodule.name + " -S->",
-							JSON.stringify(message)
-						);
+						jengine.debug(`${jmodule.name} -S-> ${JSON.stringify(message)}`);
 						jmodule.setlocal(message);
 						break;
 					case "connect":
-						LOG.debug(
-							jmodule.name + " -C->",
-							JSON.stringify(message)
-						);
+						jengine.debug(`${jmodule.name} -C-> ${JSON.stringify(message)}`);
 						if (!jmodule.ready) {
-							LOG.info(`Module ${jmodule.name} is connected.`);
+							jengine.info(`Module ${jmodule.name} has been connected.`);
 							jmodule.ready = true;
 							resolve(jmodule);
 						}
 						break;
+					case "log":
+						jengine.log(message.get("level"), ...message.get("text"));
+						break;
 					default:
-						// do nothing
-						
-							LOG.debug(
-								jmodule.name + " -\x1b[32mA\x1b[0m->",
-								JSON.stringify(message)
-							);
+						// reply
+						jengine.debug(`${jmodule.name} -\x1b[32mA\x1b[0m-> ${JSON.stringify(message)}`);
 				}
 			});
 
@@ -334,22 +336,25 @@ class JEngine {
 							}
 							message.result[key] = jmodule.respawn;
 							break;
+						case "selftimeout":
+							if (typeof message.payload[key] === "number") {
+								jmodule.selftimeout = message.payload[key];
+							}
+							message.result[key] = jmodule.selftimeout;
+							break;
+						case "jengine.configpath":
+							// readonly configpath
+							break;
+						case "jengine.modulepath":
+							// readonly modulepath
 					}
 				}
-				
-					LOG.debug(
-						jmodule.name + " <-S-",
-						JSON.stringify(message)
-					);
+				jengine.debug(`${jmodule.name} <-S- ${JSON.stringify(message)}`);
 				jmodule.sendMessage(message);
 			};
 
 			jmodule.enqueue = function (message) {
-				
-					LOG.debug(
-						jmodule.name + " <-\x1b[36mN\x1b[0m-",
-						JSON.stringify(message)
-					);
+				jengine.debug(`${jmodule.name} <-\x1b[36mN\x1b[0m- ${JSON.stringify(message)}`);
 				jmodule.sendMessage(message);
 				return Promise.resolve(message);
 			};
@@ -362,7 +367,7 @@ class JEngine {
 						message.type = "error";
 						message.error = "timeout";
 						reject(message);
-						LOG.error(`WARNING (engine) module timeout ${jmodule.name}`);
+						jengine.warn(`WARNING (engine) module timeout ${jmodule.name}`);
 					}, message.timeout); //safe timeout
 
 					jmodule.on(
@@ -379,21 +384,17 @@ class JEngine {
 								resolve(JMessage.create(answer));
 							}
 						})
-					);
-					
-						LOG.debug(
-							jmodule.name + " <-\x1b[32mR\x1b[0m-",
-							JSON.stringify(message)
-						);
+					);	
+					jengine.debug(`${jmodule.name} <-\x1b[32mR\x1b[0m- ${JSON.stringify(message)}`);
 					jmodule.sendMessage(message);
 				});
 			};
-			this._modules.push(jmodule);
+			jengine._modules.push(jmodule);
 			//resolve(jsmodule);
 		});
 	}
 
-	unload(handler) {
+	_unload(handler) {
 		handler.enqueue(new JMessage("jengine.halt"));
 		this.unsubscribe(handler);
 		return new Promise((resolve) => {
@@ -401,18 +402,27 @@ class JEngine {
 				handler.removeAllListeners("exit");
 				// handler.removeAllListeners("error");
 				handler.kill("SIGKILL");
-				LOG.warn(`Unresponsible module ${handler.name} had killed.`);
-				resolve();
+				this.warn(`Unresponsible module ${handler.name} had killed.`);
+				resolve(`Unresponsible module ${handler.name} had killed.`);
 			}, MESSAGE_TIMEOUT); // wait and kill
 
 			handler.once("exit", () => {
 				clearTimeout(_timeout);
 				handler.removeAllListeners("exit");
 				// handler.removeAllListeners("error");
-				LOG.info(`Module ${handler.name} successfully halted.`);
-				resolve();
+				this.info(`Module ${handler.name} successfully halted.`);
+				resolve(`Module ${handler.name} successfully halted.`);
 			});
 		});
+	}
+	unload(handler) {
+		if (isModule(handler)) {
+			return this._unload(handler);
+		} else if (typeof handler == "string") {
+			handler = this._modules.find(i => (i && i.name === handler));
+			if (handler) return this._unload(handler);
+		}
+		return Promise.reject("Wrong module.");
 	}
 
 	unsubscribe(handler) {
@@ -465,7 +475,7 @@ class JEngine {
 			// make fake module handler
 			return this._install(name, {
 				name: this.name,
-				dispatch: async (m) => handler(m),
+				dispatch: async (m) => handler(m)
 			});
 		} else {
 			throw new Error("Wrong handler.");
@@ -534,17 +544,6 @@ class JEngine {
 		}
 	}
 
-	// _enqueue(message, exclude) {
-	// 	let handlers = this._installs.get(message.name);
-	// 	if (handlers && handlers.length > 0) {
-	// 		for (let i = 0; i < handlers.length; i++) {
-	// 			if (handlers[i] == exclude) continue;
-	// 			handlers[i].enqueue(message);
-	// 		}
-	// 	}
-	// 	return Promise.resolve(message);
-	// }
-
 	_notify(message, exclude) {
 		message.type = "answer";
 		let handlers = this._watchers.get(message.name);
@@ -564,8 +563,7 @@ class JEngine {
 			// Dispatch the message by handlers in the piority order until the message is not handled
 			let task;
 			let asked = [];
-			if (typeof message.timeout !== "number")
-				message.timeout = MESSAGE_TIMEOUT;
+			if (typeof message.timeout !== "number") message.timeout = MESSAGE_TIMEOUT; //safe timeout
 			let started = Date.now();
 			for (let i = 0; i < handlers.length; i++) {
 				if (handlers[i] == exclude && !exclude.selfdispatch) {
@@ -595,13 +593,13 @@ class JEngine {
 	}
 }
 
-// Handler side
+/* Connect to Engine */
 function connect(options) {
     if (JENGINE) { return JENGINE }
 
 	// !!! remove for production
-	//process.once("SIGTERM", () => {});
-	//process.once("SIGINT", () => {});
+	// process.once("SIGTERM", () => {});
+	// process.once("SIGINT", () => {});
 	process.setMaxListeners(200);
 
 	process.on("error", err => {
@@ -612,7 +610,7 @@ function connect(options) {
     // Handle messages from JEngine
     process.on("message", message => {
         if (!JMessage.isMessage(message)) {
-			console.log("WARNING (module) Unknown message", message);
+			JENGINE.warn("WARNING (module) Unknown message", message);
 			return;
 		}
         message = JMessage.create(message);
@@ -649,7 +647,7 @@ function connect(options) {
 		_installs: new Map(),
 		_watches: new Map(),
 
-		_handle: function (message) {
+		_handle: function(message) {
 			let handler = JENGINE._installs.get(message.name);
 			if (typeof handler !== "function") {
 				return Promise.resolve(message);
@@ -663,11 +661,7 @@ function connect(options) {
 				let timeout = setTimeout(() => {
 					message.error = "Message handler timeout.";
 					reject(message);
-					console.log(
-						"WARNING (module) handler timeout.",
-						message.name,
-						message.id
-					);
+					JENGINE.warn("WARNING (module) handler timeout.", message.name,	message.id);
 				}, dispatch_timeout - MESSAGE_DELAY);
 
 				return Promise.resolve(handler(message)).then((answer) => {
@@ -678,12 +672,7 @@ function connect(options) {
 			}).catch((err) => {
 				message.type = "error";
 				message.error = err.error;
-				console.log(
-					"ERROR (module) handler error.",
-					message.name,
-					message.id,
-					err
-				);
+				JENGINE.error("ERROR (module) handler error.", message.name, message.id, err);
 				return message;
 			});
 		},
@@ -699,30 +688,22 @@ function connect(options) {
 		install: function (name, handler, priority) {
 			if (typeof priority !== "number") priority = 100;
 			JENGINE._installs.set(name, handler);
-			process.send(
-				JMessage.create({ type: "install", name: name, priority: priority })
-			);
+			process.send(JMessage.create({ type: "install", name: name, priority: priority }));
 		},
 
 		uninstall: function (name) {
 			JENGINE._installs.delete(name);
-			process.send(
-				JMessage.create({ type: "uninstall", name: name })
-			);
+			process.send(JMessage.create({ type: "uninstall", name: name }));
 		},
 
 		watch: function (name, handler) {
 			JENGINE._watches.set(name, handler);
-			process.send(
-				JMessage.create({ type: "watch", name: name })
-			);
+			process.send(JMessage.create({ type: "watch", name: name }));
 		},
 
 		unwatch: function (name) {
 			JENGINE._watches.delete(name);
-			process.send(
-				JMessage.create({ type: "unwatch", name: name })
-			);
+			process.send(JMessage.create({ type: "unwatch", name: name }));
 		},
 
 		enqueue: function (name, options) {
@@ -750,18 +731,14 @@ function connect(options) {
 				const dispatch_timeout =
 					typeof message.timeout == "number"
 						? message.timeout
-						: MESSAGE_TIMEOUT;
+						: (JENGINE.selftimeout || MESSAGE_TIMEOUT);
 
 				let timeout = setTimeout(() => {
 					process.removeListener("message", listener);
 					message.type = "error";
 					message.error = "timeout";
 					reject(message);
-					console.log(
-						"ERROR (module) dispatch timeout",
-						message._name,
-						message._id
-					);
+					JENGINE.error("ERROR (module) dispatch timeout", message.name,	message.id);
 				}, dispatch_timeout + 10);
 
 				process.on(
@@ -793,18 +770,20 @@ function connect(options) {
 			});
 		},
 
-		setlocal: function(params) {
-			if (typeof params !== "object") return Promise.reject(params);
+		setlocal: function(params, value) {
+			if (!(typeof params == "object" || typeof params == "string")) return Promise.reject(params);
 			return new Promise((resolve, reject) => {
 				let listener;
 
 				let timeout = setTimeout(() => {
 					process.removeListener("message", listener);
 					reject(params);
-					console.log("ERROR (module) setlocal timeout", params );
-				}, MESSAGE_TIMEOUT);
+					JENGINE.error("ERROR (module) setlocal timeout", params );
+				}, JENGINE.selftimeout || MESSAGE_TIMEOUT);
 
+				params = typeof params == "string" ? { [params]: (typeof value == "number" || typeof value == "boolean" || typeof value == "string") ? value : null } : params;
 				const message = JMessage.create({type: "setlocal", name: "setlocal", ...params});
+				
 				process.on(
 					"message",
 					listener = (answer) => {
@@ -820,10 +799,13 @@ function connect(options) {
 									answer.name,
 									answer.id
 								);
-								reject(JMessage.create(answer));
+								reject(answer.error);
 							} else {
-								//if (params.trackname)
-								resolve(JMessage.create(answer));
+								resolve(answer.result);
+								// Dangerous!!! can break JENGINE
+								for (let key in answer.payload) {
+									if (/^(respawn|selfwatch|selfdispatch|selftimeout)$/.test(key)) JENGINE[key] = answer.payload[key];
+								}
 							}
 						}
 					}
@@ -832,6 +814,14 @@ function connect(options) {
 			});
 		}
 	};
+
+	let LOG = new Logger();
+	// replace LOG writer with message sender
+	LOG._write = (level, ...args) => {
+		process.send(JMessage.create({type: "log", name: "log", level: level, text: args}));
+	};
+
+	Object.setPrototypeOf(JENGINE, LOG);
 
 	// Resolves parent loadModule promise
 	process.send(JMessage.create({type: "connect", name: "connect"}));
