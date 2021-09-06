@@ -1,8 +1,16 @@
+/**
+ * JSON Message Switch Engine
+ * @author Anton <aucyxob@gmail.com>
+ * @version 0.1.1
+ * @license Apache-2.0
+ * @description coming soon
+ */
 "use strict";
 
 const crypto = require("crypto");
 const path = require("path");
 const { fork, ChildProcess } = require("child_process");
+const { throws } = require("assert");
 
 /* defaults */
 let MESSAGE_TIMEOUT = 3000; // default timeout dispatch: 3s
@@ -21,12 +29,17 @@ class Logger {
 	getLevel() { return this.level }
 	log(level, ...args) {
 		if (typeof level == "string") level = Logger[level];
+		if (level < 0) {
+			console.log(...args);
+			return;
+		}
 		if (level <= this.level) this._write(level, ...args);
 	}
 	error(...args) { this.log(Logger.ERROR, ...args) }
 	warn(...args) { this.log(Logger.WARN, ...args) }
 	info(...args) { this.log(Logger.INFO, ...args) }
 	debug(...args) { this.log(Logger.DEBUG, ...args) }
+	raw(...args) { this.log(-1, ...args) }
 	_write(level, ...args) {
 		//                                                        blue                      green                     purple       red
 		console.log(`${new Date().toISOString()} [${level > 2 ? "\x1b[36m" : (level > 1 ? "\x1b[32m" : (level > 0 ? "\x1b[35m" : "\x1b[31m"))}${Logger[level]}\x1b[0m]`, ...args);
@@ -145,12 +158,20 @@ JMessage.create = function(obj) {
 /* Engine */
 class JEngine extends Logger {
 
-	constructor(name) {
+	constructor(options = "jms") {
 		super();
 		this._modules = [];
 		this._installs = new Map(); // message_name, [handlers] ordered by priority
 		this._watchers = new Map();
-		this.name = name;
+		this._dir = path.dirname(__filename);
+		if (typeof options == "string") {
+			this.name = options;
+		} else {
+			this.name =	options?.name ?? "jms";
+		}
+		this.configpath = options?.configpath ?? this._dir + "/../conf/";
+		this.modulepath = options?.modulepath ?? this._dir + "/../modules/";
+		// console.log("Configpath:", this.configpath, "\nModulepath:", this.modulepath);
 	}
 
 	getModules() {
@@ -342,11 +363,11 @@ class JEngine extends Logger {
 							}
 							message.result[key] = jmodule.selftimeout;
 							break;
-						case "jengine.configpath":
-							// readonly configpath
+						case "configpath":
+							message.result[key] = jengine.configpath;
 							break;
-						case "jengine.modulepath":
-							// readonly modulepath
+						case "modulepath":
+							message.result[key] = jengine.modulepath;
 					}
 				}
 				jengine.debug(`${jmodule.name} <-S- ${JSON.stringify(message)}`);
@@ -455,7 +476,7 @@ class JEngine extends Logger {
 			for (let i = 0; i < handlers.length; i++) {
 				if (handlers[i] == handler) {
 					handlers[i] = handler;
-					handlers.sort(_getSortHandlers(name));
+					handlers.sort(sortHandlers(name));
 					return;
 				}
 			}
@@ -463,7 +484,7 @@ class JEngine extends Logger {
 		} else {
 			handlers = [handler];
 		}
-		handlers.sort(_getSortHandlers(name));
+		handlers.sort(sortHandlers(name));
 		this._installs.set(name, handlers);
 	}
 
@@ -489,7 +510,7 @@ class JEngine extends Logger {
 				name,
 				handlers
 					.filter((h) => h !== handler)
-					.sort(_getSortHandlers(name))
+					.sort(sortHandlers(name))
 			);
 		}
 	}
@@ -688,6 +709,7 @@ function connect(options) {
 		install: function (name, handler, priority) {
 			if (typeof priority !== "number") priority = 100;
 			JENGINE._installs.set(name, handler);
+			if (name === "jengine.halt") return; // every module already subscribed to jengine.halt
 			process.send(JMessage.create({ type: "install", name: name, priority: priority }));
 		},
 
@@ -832,6 +854,13 @@ function connect(options) {
 	if(typeof options === "string" && options.length > 0) {
 		JENGINE.setlocal({trackname: options});
 	}
+	// Default jengine.halt haldler
+	JENGINE._installs.set("jengine.halt", () => {
+		for (let n of JENGINE._installs.keys()) {
+			JENGINE.uninstall(n);
+		}
+		process.exit(0);
+	});
 
     return JENGINE;
 }
@@ -840,7 +869,7 @@ function isModule(handler) {
 	return (handler instanceof ChildProcess);
 }
 
-function _getSortHandlers(name) {
+function sortHandlers(name) {
     return function(a, b) {
 		if (!a || !b || !a.installs || !b.installs) return 0
         if (a.installs[name] > b.installs[name]) return 1;
