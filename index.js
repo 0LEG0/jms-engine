@@ -10,7 +10,6 @@
 const crypto = require("crypto");
 const path = require("path");
 const { fork, ChildProcess } = require("child_process");
-const { throws } = require("assert");
 
 /* defaults */
 let MESSAGE_TIMEOUT = 3000; // default timeout dispatch: 3s
