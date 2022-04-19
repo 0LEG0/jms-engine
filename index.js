@@ -410,7 +410,7 @@ class JEngine extends Logger {
 				});
 			};
 			jengine._modules.push(jmodule);
-			//resolve(jsmodule);
+			resolve(jmodule);
 		});
 	}
 
