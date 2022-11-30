@@ -619,9 +619,12 @@ function connect(options) {
 
 	// !!! remove for production
 	// process.once("SIGTERM", () => {});
-	// process.once("SIGINT", () => {});
+	process.once("SIGINT", () => {});
 	process.setMaxListeners(200);
-
+	// process.on("disconnect", () => {
+	// 	console.log("Module disconnected, exit");
+	// 	process.exit(1);
+	// });
 	process.on("error", err => {
 		console.log("Module error", err.stack);
 		process.exit(1);
