@@ -67,14 +67,21 @@ class JMessage {
 		if (typeof payload === "object") this.payload = {...payload};
 	}
 
-	get(key) {
-		return this.payload[key];
-	}
-
 	set(key, value) {
 		this.payload[key] = value;
 	}
 
+	get(key = "") {
+		let res = this.payload;
+		for (let k of key.split(".")) {
+			if (typeof res == "object" && k in res) {
+				res = res[k];
+			} else {
+				return;
+			}
+		}
+		return res;
+	}
 }
 
 JMessage.copyObject = function(src, dst) {
