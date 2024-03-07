@@ -1,7 +1,7 @@
 /**
  * JSON Message Switch Engine
  * @author Anton <aucyxob@gmail.com>
- * @version 0.1.1
+ * @version 0.1.3
  * @license Apache-2.0
  * @description coming soon
  */
@@ -640,7 +640,7 @@ function connect(options) {
     // Handle messages from JEngine
     process.on("message", message => {
         if (!JMessage.isMessage(message)) {
-			JENGINE.warn("WARNING (module) Unknown message", message);
+			JENGINE.warn("(module) Unknown message", message);
 			return;
 		}
         message = JMessage.create(message);
@@ -678,6 +678,7 @@ function connect(options) {
 		_watches: new Map(),
 
 		_handle: function(message) {
+			let timeout;
 			let handler = JENGINE._installs.get(message.name);
 			if (typeof handler !== "function") {
 				return Promise.resolve(message);
@@ -688,21 +689,22 @@ function connect(options) {
 						? message.timeout
 						: MESSAGE_TIMEOUT;
 
-				let timeout = setTimeout(() => {
-					message.error = "Message handler timeout.";
+				timeout = setTimeout(() => {
+					message.error = "Message timeout.";
 					reject(message);
-					JENGINE.warn("WARNING (module) handler timeout.", message.name,	message.id);
+					//JENGINE.warn("WARNING (module) handler timeout.", message.name,	message.id);
 				}, dispatch_timeout - MESSAGE_DELAY);
 
-				return Promise.resolve(handler(message)).then((answer) => {
+				Promise.resolve(handler(message)).then((answer) => {
 					clearTimeout(timeout);
 					resolve(answer);
 				});
 
 			}).catch((err) => {
+				clearTimeout(timeout);
 				message.type = "error";
-				message.error = err.error;
-				JENGINE.error("ERROR (module) handler error.", message.name, message.id, err);
+				message.error = err.error ?? err.toString();//.error;
+				JENGINE.error("(module)", message.name, message.id, message.error);
 				return message;
 			});
 		},
@@ -809,7 +811,7 @@ function connect(options) {
 				let timeout = setTimeout(() => {
 					process.removeListener("message", listener);
 					reject(params);
-					JENGINE.error("ERROR (module) setlocal timeout", params );
+					JENGINE.error("(module) setlocal timeout", params );
 				}, JENGINE.selftimeout || MESSAGE_TIMEOUT);
 
 				params = typeof params == "string" ? { [params]: (typeof value == "number" || typeof value == "boolean" || typeof value == "string") ? value : null } : params;
