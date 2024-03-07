@@ -1,7 +1,7 @@
 /**
  * JSON Message Switch Engine
  * @author Anton <aucyxob@gmail.com>
- * @version 0.1.3
+ * @version 0.2.0
  * @license Apache-2.0
  * @description coming soon
  */
@@ -22,8 +22,8 @@ class Logger {
 		this.level = level;
 	}
 	setLevel(l) {
-		if (typeof l == "string" && typeof Logger[l] == "number" && Logger[l] >= 0 && Logger[l] <= 3) this.level = Logger[l];
-		if (typeof l == "number" && l >= 0 && l <= 3) this.level = l;
+		if (typeof l == "string" && typeof Logger[l] == "number" && Logger[l] >= 0 && Logger[l] <= 4) this.level = Logger[l];
+		if (typeof l == "number" && l >= 0 && l <= 4) this.level = l;
 	}
 	getLevel() { return this.level }
 	log(level, ...args) {
@@ -36,18 +36,20 @@ class Logger {
 	}
 	error(...args) { this.log(Logger.ERROR, ...args) }
 	warn(...args) { this.log(Logger.WARN, ...args) }
+	note(...args) { this.log(Logger.NOTE, ...args) }
 	info(...args) { this.log(Logger.INFO, ...args) }
 	debug(...args) { this.log(Logger.DEBUG, ...args) }
 	raw(...args) { this.log(-1, ...args) }
 	_write(level, ...args) {
-		//                                                        blue                      green                     purple       red
-		console.log(`${new Date().toISOString()} [${level > 2 ? "\x1b[36m" : (level > 1 ? "\x1b[32m" : (level > 0 ? "\x1b[35m" : "\x1b[31m"))}${Logger[level]}\x1b[0m]`, ...args);
+		//                                                        blue                      green                     yellow                   purple       red
+		console.log(`${new Date().toISOString()} [${level > 3 ? "\x1b[36m" : (level > 2 ? "\x1b[32m" : (level > 1 ? "\x1b[33m" : (level > 0 ? "\x1b[35m" : "\x1b[31m")))}${Logger[level]}\x1b[0m]`, ...args);
 	}
 }
 Logger.ERROR = 0; Logger[0] = "ERROR";
 Logger.WARN = 1; Logger[1] = "WARN";
-Logger.INFO = 2; Logger[2] = "INFO";
-Logger.DEBUG = 3; Logger[3] = "DEBUG";
+Logger.NOTE = 2; Logger[2] = "NOTE";
+Logger.INFO = 3; Logger[3] = "INFO";
+Logger.DEBUG = 4; Logger[4] = "DEBUG";
 
 /* Message */
 class JMessage {
