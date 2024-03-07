@@ -1,7 +1,7 @@
 /**
  * JSON Message Switch Engine
  * @author Anton <aucyxob@gmail.com>
- * @version 0.2.0
+ * @version 0.2.1
  * @license Apache-2.0
  * @description coming soon
  */
@@ -18,8 +18,11 @@ let JENGINE = null;
 
 /* logger */
 class Logger {
-	constructor(level = 3) {
-		this.level = level;
+	constructor() {
+		// colored output if supported           red         purple      yello       green       blue
+		this._colors = process.stdout.isTTY ? [ "\x1b[31m", "\x1b[35m", "\x1b[33m", "\x1b[32m", "\x1b[36m" ] : ["","","","",""];
+		this._b = process.stdout.isTTY ? "\x1b[0m" : "";
+		this.level = 3;
 	}
 	setLevel(l) {
 		if (typeof l == "string" && typeof Logger[l] == "number" && Logger[l] >= 0 && Logger[l] <= 4) this.level = Logger[l];
@@ -32,7 +35,9 @@ class Logger {
 			console.log(...args);
 			return;
 		}
-		if (level <= this.level) this._write(level, ...args);
+		if (level <= this.level) {
+			console.log(`${new Date().toISOString()} [${this._colors[level]}${Logger[level]}${this._b}]`, ...args);
+		}
 	}
 	error(...args) { this.log(Logger.ERROR, ...args) }
 	warn(...args) { this.log(Logger.WARN, ...args) }
@@ -40,10 +45,6 @@ class Logger {
 	info(...args) { this.log(Logger.INFO, ...args) }
 	debug(...args) { this.log(Logger.DEBUG, ...args) }
 	raw(...args) { this.log(-1, ...args) }
-	_write(level, ...args) {
-		//                                                        blue                      green                     yellow                   purple       red
-		console.log(`${new Date().toISOString()} [${level > 3 ? "\x1b[36m" : (level > 2 ? "\x1b[32m" : (level > 1 ? "\x1b[33m" : (level > 0 ? "\x1b[35m" : "\x1b[31m")))}${Logger[level]}\x1b[0m]`, ...args);
-	}
 }
 Logger.ERROR = 0; Logger[0] = "ERROR";
 Logger.WARN = 1; Logger[1] = "WARN";
@@ -179,7 +180,6 @@ class JEngine extends Logger {
 		}
 		this.configpath = options?.configpath ?? this._dir + "/../conf/";
 		this.modulepath = options?.modulepath ?? this._dir + "/../modules/";
-		// console.log("Configpath:", this.configpath, "\nModulepath:", this.modulepath);
 	}
 
 	getModules() {
@@ -262,7 +262,7 @@ class JEngine extends Logger {
 				}
 				// Skip if not message
 				if (!JMessage.isMessage(message)) {
-					jengine.debug(`${jmodule.name} -\x1b[31m?\x1b[0m-> ${JSON.stringify(message)}`);
+					jengine.debug(`${jmodule.name} -${jengine._colors[0]}?${jengine._b}-> ${JSON.stringify(message)}`);
 					return;
 				}
 				message = JMessage.create(message);
@@ -272,9 +272,9 @@ class JEngine extends Logger {
 				switch (message.type) {
 					case "request":
 						if (message.enqueue) {
-							jengine.debug(`${jmodule.name} -\x1b[31mE\x1b[0m-> ${JSON.stringify(message)}`);
+							jengine.debug(`${jmodule.name} -${jengine._colors[0]}E${jengine._b}-> ${JSON.stringify(message)}`);
 						} else {
-							jengine.debug(`${jmodule.name} -\x1b[31mR\x1b[0m-> ${JSON.stringify(message)}`);
+							jengine.debug(`${jmodule.name} -${jengine._colors[0]}R${jengine._b}-> ${JSON.stringify(message)}`);
 						}
 						jengine._dispatch(message, jmodule)
 							.catch((err) => {
@@ -287,7 +287,7 @@ class JEngine extends Logger {
 								answer.type = (answer.type !== "error") ? "answer" : "error";
 								answer.handled = answer.handled ? true : false;
 								if (!message.enqueue) {
-									jengine.debug(`${jmodule.name} <-\x1b[31mA\x1b[0m- ${JSON.stringify(answer)}`);
+									jengine.debug(`${jmodule.name} <-${jengine._colors[0]}A${jengine._b}- ${JSON.stringify(answer)}`);
 									if (jmodule.connected) jmodule.sendMessage(answer);
 								}
 								return answer;
@@ -328,7 +328,7 @@ class JEngine extends Logger {
 						break;
 					default:
 						// reply
-						jengine.debug(`${jmodule.name} -\x1b[32mA\x1b[0m-> ${JSON.stringify(message)}`);
+						jengine.debug(`${jmodule.name} -${jengine._colors[3]}A${jengine._b}-> ${JSON.stringify(message)}`);
 				}
 			});
 
@@ -383,7 +383,7 @@ class JEngine extends Logger {
 			};
 
 			jmodule.enqueue = function (message) {
-				jengine.debug(`${jmodule.name} <-\x1b[36mN\x1b[0m- ${JSON.stringify(message)}`);
+				jengine.debug(`${jmodule.name} <-${jengine._colors[4]}N${jengine._b}- ${JSON.stringify(message)}`);
 				jmodule.sendMessage(message);
 				return Promise.resolve(message);
 			};
@@ -414,7 +414,7 @@ class JEngine extends Logger {
 							}
 						})
 					);	
-					jengine.debug(`${jmodule.name} <-\x1b[32mR\x1b[0m- ${JSON.stringify(message)}`);
+					jengine.debug(`${jmodule.name} <-${jengine._colors[3]}R${jengine._b}- ${JSON.stringify(message)}`);
 					jmodule.sendMessage(message);
 				});
 			};
@@ -852,7 +852,7 @@ function connect(options) {
 
 	let LOG = new Logger();
 	// replace LOG writer with message sender
-	LOG._write = (level, ...args) => {
+	LOG.log = (level, ...args) => {
 		process.send(JMessage.create({type: "log", name: "log", level: level, text: args}));
 	};
 
